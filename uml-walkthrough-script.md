@@ -8,13 +8,14 @@
 
 ### The five entities everything in Leap is built from
 
+db
 This is our domain model. Five classes matter: Account, Order, Instrument, Position, and Asset, which is an abstract class that Stock, Bond, and Etf all extend.
 
 Account holds a cash balance and a status: ACTIVE, INACTIVE, or SUSPENDED. Order represents one buy or sell request. It has a side, a quantity, a price, and an idempotency key, so the same request can't accidentally create two orders. Its status moves through NEW, FILLED, REJECTED, or CANCELLED.
 
 Instrument is reference data: symbol, exchange, currency, and whether it's tradable. Position links an account to an instrument, recording how many shares they hold and at what average cost. It also has helper methods for cost basis and market value.
 
-Here's the key point of this diagram: none of these classes hold a direct reference to each other in code. Everything is joined by matching IDs, like accountId and symbol, not object pointers. Only one of those links is actually enforced in Java: Order to Instrument, inside OrderService and OrderValidationService. The rest — Position, Asset, and Price pointing at Instrument — are enforced only by a database foreign key. Nothing in the Java code checks them yet.
+
 
 ## Persistence Layer – UML Class Diagram
 
