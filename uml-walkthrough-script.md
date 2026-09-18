@@ -54,11 +54,11 @@ Everything ends the same way regardless of side: the strategy marks the order FI
 
 This traces OrderService.placeOrder for a SELL order, run through OrderValidationService.
 
-First it checks the account. A null account throws InvalidOrderException. An account that isn't ACTIVE throws AccountNotActiveException. Next it checks the instrument: null throws InstrumentNotFoundException, and one that isn't tradable throws TradingException.
+First it checks the account. An account that isn't ACTIVE throws AccountNotActiveException. Next it checks the instrument: null throws InstrumentNotFoundException, and one that isn't tradable throws TradingException.
 
-Then it checks holdings. It calls PositionRepository.findByAccountAndSymbol, which returns an Optional Position, empty if the account doesn't hold that symbol at all. It reads the held quantity off that, treating no position as zero, and compares it to the quantity being sold. Selling more than they hold throws InsufficientHoldingsException.
+Then it checks holdings. It calls PositionRepository.findByAccountAndSymbol, which returns an Optional Position, it is empty if the account doesn't hold that symbol at all. It reads the held quantity off that, and compares it to the quantity being sold. Selling more than they hold throws InsufficientHoldingsException.
 
-If everything passes, OrderService builds the Order and calls its internal createOrder, which checks whether this idempotency key has been used before. If so, DuplicateOrderException. Otherwise the order saves with status NEW and comes back to the caller.
+If everything passes, OrderService builds the Order and checks whether this idempotency key has been used before. If so, DuplicateOrderException. Otherwise the order saves with status NEW and comes back to the caller.
 
 ## Account Management – UML Sequence Diagram
 
