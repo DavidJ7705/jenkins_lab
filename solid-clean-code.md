@@ -6,9 +6,9 @@ Not textbook definitions — one real example from our own code for each princip
 
 ## Single Responsibility
 
-**Example: `PositionManager` vs. `PositionService`**
+**Example: `OrderService` vs. `OrderValidationService`**
 
-A good example is `PositionManager` versus `PositionService`. `PositionManager` talks to the repository — it finds positions, creates them, saves them, deletes them when they hit zero. `PositionService` does none of that — it's pure math, `applyBuy` and `applySell`, recalculating average cost or subtracting quantity, with zero repository dependency. Two classes, two separate reasons to change: one changes if we swap storage, the other changes if we change how average cost gets calculated. Same pattern with `AccountService` — it only ever does credit and debit, nothing else touches the cash balance.
+A good example is `OrderService` versus `OrderValidationService`. `OrderValidationService` is the rule-checker — it decides whether an order is even allowed: account active, instrument tradable, quantity and price sane, enough cash for a BUY, enough holdings for a SELL. It never saves anything, it just throws if a rule is broken. `OrderService` is the orchestrator — it calls the validator first, then builds the `Order`, enforces the idempotency key so duplicates get rejected, and persists it through `OrderRepository`. Two classes, two separate reasons to change: one changes if a trading rule changes, the other changes if persistence or idempotency handling changes. Same pattern with `AccountService` — it only ever does credit and debit, nothing else touches the cash balance.
 
 ## Open/Closed
 
