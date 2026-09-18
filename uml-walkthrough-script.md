@@ -28,21 +28,23 @@ Right now each interface has exactly one implementation, and it's in-memory: InM
 
 The point of the interface is that the services, like OrderService and AccountService, only ever depend on it and never on the in-memory class directly. So when we do add a database, we can swap in a new OrderRepository implementation and nothing in OrderService has to change.
 
-## Order Placement – UML Sequence Diagram
+## Order Processing Logic – UML Class Diagram
 
-*File: order-sequence-uml.md*
+*File: order-logic-uml.md*
 
-### OrderService.placeOrder validating a BUY order, step by step
+### The business classes behind placing and executing an order
 
-This traces OrderService.placeOrder for a BUY order, in the exact order the checks run in code. It's fail-fast: the first check that fails stops everything else.
+This replaces the old BUY-order and full-lifecycle sequence diagrams with a single class diagram. A sequence diagram is great for tracing one call path step by step, but order processing now has two separate concerns — validating/creating an order, and executing it — so a class diagram showing how the pieces are wired together is the clearer picture. Persistence repositories and detailed model fields are covered in the domain and persistence diagrams; this one stays focused on the business classes.
 
-The client calls placeOrder with the account, instrument, side, quantity, price, and an idempotency key. That hands off to OrderValidationService.validateOrder.
+`OrderProcessor` is the orchestrator — `processOrder` is its one public entry point, and it returns an `OrderResult`. It depends on `OrderService` to create and save orders, and on `OrderExecutionStrategy` to pick BUY or SELL behaviour.
 
-First it checks the account. A null account throws InvalidOrderException. An account that isn't ACTIVE throws AccountNotActiveException. Next it checks the instrument: null throws InstrumentNotFoundException, and one that isn't tradable throws TradingException.
+`OrderService` creates the `Order` and validates it by calling through to `OrderValidationService`, which in turn checks the `Account` (funds and active status) and the `Instrument` (tradability).
 
-Then come the BUY-specific checks. Quantity and price both have to be positive, or it's an InvalidOrderException. Then it checks affordability, comparing quantity times price against the account's cash balance. If the order costs more than the account has, that's InsufficientFundsException.
+`OrderExecutionStrategy` is the interface both `BuyOrderStrategy` and `SellOrderStrategy` implement: `execute(Order, Account, Instrument)` returns an `OrderResult`. BUY debits cash and increases the position; SELL credits cash and decreases it. To do that, the strategy calls `AccountService` (`credit`/`debit`, which updates the `Account`'s cash balance) and `PositionService`.
 
-If everything passes, OrderService builds the Order and calls its internal createOrder, which checks one more thing: has this idempotency key been used before? If so, DuplicateOrderException, because we never want the same request to create two orders. Otherwise the order saves with status NEW and comes back to the caller.
+`PositionService` is the one class on this diagram that changed recently: `updatePositionAfterBuy` and `updatePositionAfterSell` are still the entry points a strategy calls, but the actual math now lives in two extracted methods, `applyBuy` and `applySell`. `applyBuy` finds or creates the position, then recalculates a weighted-average cost from the existing cost basis plus the new purchase cost. `applySell` subtracts the sold quantity and throws `InsufficientHoldingsException` if there isn't enough to sell. `updatePositionAfterSell` deletes the position outright if that subtraction brings it to zero, rather than leaving a zero-quantity row behind.
+
+Everything ends the same way regardless of side: the strategy marks the order FILLED or REJECTED, returns an `OrderResult` with `isSuccess()` and `getMessage()`, and `OrderProcessor` saves the order one last time with its final status before handing the result back.
 
 ## Sell Order – UML Sequence Diagram
 
@@ -73,21 +75,3 @@ Once both checks pass, it adds the amount to the cash balance and increments the
 Debit runs the same two checks in the same order, amount then account, with the same exceptions. It adds one more step before touching the balance: if the requested amount is greater than the current cash balance, that's InsufficientFundsException. Otherwise it subtracts the amount and increments the version, same as credit.
 
 In practice, BuyOrderStrategy calls debit when a BUY order executes, and SellOrderStrategy calls credit when a SELL order executes.
-
-## Order Processing – Business Logic Sequence Diagram
-
-*File: order-processing-business-logic.md*
-
-### The full lifecycle through OrderProcessor: validation, execution, and rollback
-
-This is the full order lifecycle, end to end, through OrderProcessor, the class that ties together everything we've covered so far.
-
-It starts with processOrder, which hands off to OrderService.placeOrder. That runs the same validation from the BUY and SELL diagrams: bad account, bad instrument, insufficient funds or holdings, bad input. Any failure stops everything, and OrderProcessor rejects the order right there.
-
-If validation passes, the order already exists with status NEW and is saved. OrderProcessor then picks a strategy based on side, either BuyOrderStrategy or SellOrderStrategy, and calls execute with the order, account, and instrument.
-
-For a BUY: the strategy debits the account for price times quantity. Then PositionManager.updatePositionAfterBuy finds or creates the position, recalculates a weighted-average cost, and saves it.
-
-For a SELL: it's credit instead of debit. updatePositionAfterSell finds the position and subtracts the quantity. If that brings it to zero, the position gets deleted outright rather than left at zero. Otherwise it's just saved with the new quantity.
-
-Either way, once cash and position updates succeed, the strategy marks the order FILLED and returns a result. OrderProcessor saves the order one more time with its final status and returns that result to the caller.
