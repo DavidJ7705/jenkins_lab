@@ -1,0 +1,76 @@
+STORY 1 — Scaffold the Spring Boot project · 3 pts
+As a developer, I want the existing Maven module converted into a runnable Spring Boot app so I can start building REST endpoints on top of the current domain logic.
+
+Add spring-boot-starter-web, spring-boot-starter-validation, mybatis-spring-boot-starter, postgresql driver to pom.xml
+Replace maven-jar-plugin with spring-boot-maven-plugin's repackage goal (keep finalName: team-skeleton so the existing Dockerfile's COPY target/team-skeleton.jar app.jar keeps working unchanged)
+Add application.yml with datasource config driven by the same env vars as .env/docker-compose.yml
+Decide whether Main.java (currently just prints "Hello world") becomes the @SpringBootApplication entrypoint or is replaced by a new TradeApiApplication
+AC: mvn spring-boot:run starts an embedded server and /actuator/health (or equivalent) returns 200; mvn package produces a runnable fat jar.
+STORY 2 — Define the OpenAPI contract
+As a team, we want the order/account API contract written up front so the Angular (Sprint 9) and Auth (Sprint 8) teams can build against a stable spec. · 3 pts
+
+Author OpenAPI spec covering the 6 endpoints in PDF §9.3: POST /api/v1/orders, DELETE /api/v1/orders/{id}, GET /api/v1/accounts/{id}, /balance, /positions, /orders
+Reuse existing shapes: PlaceOrderRequest, OrderResponse, AccountResponse, PositionResponse
+AC: Spec reviewed by team; error responses in the spec match the codes in PDF §21 (ACC-404, ACC-403, INS-404, ORD-400, ORD-409, VAL-422).
+STORY 3 — MyBatis persistence layer · 8 pts
+As a developer, I want Postgres-backed repository implementations so Accounts/Orders/Positions/Instruments persist for real instead of living only in memory.
+
+Implement MyBatis @Mapper interfaces for accounts, orders, positions, instruments (schema in sql/tables/01-04*.sql)
+New implementations of the existing AccountRepository, OrderRepository, PositionRepository, InstrumentRepository interfaces, sitting alongside (not replacing) the current InMemory*Repository classes
+Remove OrderService's in-memory ordersByIdempotencyKey ConcurrentHashMap and rely on the persisted OrderRepository — the DB already has a UNIQUE constraint on orders.idempotency_key; a duplicate insert should be caught and translated into DuplicateOrderException at the repository/service boundary instead of checked against a non-durable in-memory cache
+AC: New repo implementations pass the same behavioural contract as the in-memory versions; data round-trips through real Postgres via docker-compose; placing an order with a reused idempotency key after an app restart still correctly throws DuplicateOrderException (proves the in-memory cache is gone).
+STORY 4 — Order controller (place / cancel) · 5 pts
+As a trader, I want REST endpoints to place and cancel orders so the frontend can submit trades.
+
+POST /api/v1/orders → wraps OrderService.placeOrder() / OrderProcessor + Buy/Sell strategies
+DELETE /api/v1/orders/{id} → cancels a working order; returns 409 ORD-409 if already filled/cancelled
+AC: Both endpoints covered by integration tests (MockMvc or similar); idempotency behaviour now backed by Story 3's persisted check, not the removed in-memory map.
+STORY 5 — Account/portfolio controller (read endpoints) · 3 pts
+As a trader, I want to view account details, balance, positions and order history via REST so the UI has data to render.
+
+GET /api/v1/accounts/{id}, /balance, /positions, /orders
+Wraps AccountService/PositionService
+AC: All 4 endpoints return correct data for a seeded account; AccountNotFoundException maps to 404.
+STORY 6 — Global exception handling · 3 pts
+As a developer, I want a @ControllerAdvice that maps the existing exception hierarchy to the PDF's error catalog so clients get consistent error responses.
+
+Create a new ErrorResponse DTO (errorCode, message) in dtos/responses/ — this does not currently exist in the codebase
+Map AccountNotFoundException→ACC-404, AccountNotActiveException→ACC-403, InstrumentNotFoundException/InstrumentNotTradableException→INS-404, InsufficientFundsException→ORD-400, InsufficientHoldingsException/DuplicateOrderException→ORD-409, bean-validation failures→VAL-422
+AC: Each exception type returns the correct HTTP status and an ErrorResponse body matching PDF §21.1.
+STORY 7 — Request validation & structured logging · 2 pts
+As an ops engineer, I want validated requests and structured logs so bad input is rejected cleanly and issues are traceable.
+
+Confirm @Valid/Bean Validation fires through the controller layer (validation annotations already exist on DTOs)
+Add structured logging (SLF4J + JSON encoder) on order placement, cancellation, and error paths
+AC: Invalid payload → 422 VAL-422; logs show request correlation for a placed order.
+STORY 8 — Verify the Dockerised service end-to-end · 1 pt
+As a team, we want the existing Docker setup confirmed working now that the jar is Spring Boot–packaged.
+
+No new Dockerfile/compose changes expected — Dockerfile and the app service in docker-compose.yml (mapping 8081:8080) already match a Spring Boot fat jar; this story just proves it end-to-end once Story 1's repackage change lands
+AC: docker-compose up -d produces a working API reachable on 8081, backed by the postgres container.
+STORY 9 — Integration tests & showcase readiness · 5 pts
+As a team, we want end-to-end confidence before the Sprint 6 showcase.
+
+Integration tests covering the happy path + each business rule in PDF §20 (funds check, holdings check, idempotency, inactive account, untradable instrument)
+Update README.md with API run/test instructions
+AC: Full order lifecycle (place → balance/position updated → cancel) demonstrable via curl/Postman against the Dockerised service; matches PDF §9.6 showcase checklist (running service, API demo, Postgres persistence, container, feature branch merged to develop).
+
+
+
+---
+Ready right now:
+
+Story 1 (scaffold Spring Boot) — pure pom.xml/config work, touches nothing anyone else is building yet
+Story 2 (OpenAPI contract) — just needs the existing DTO shapes, doesn't need the app running
+Blocked until Story 1 lands:
+
+Story 3 (MyBatis) needs the mybatis-spring-boot-starter dependency Story 1 adds
+Story 8 (Docker verification) needs the spring-boot-maven-plugin repackage from Story 1 to produce a runnable jar
+Blocked until Story 3 lands:
+
+Story 4 and Story 5 (controllers) need real repository implementations to wire to — building them against the in-memory repos first would just mean rework later
+Can start in parallel with anything, but logically finishes late:
+
+Story 6 — the new ErrorResponse DTO can be written any time, but wiring @ControllerAdvice needs Stories 4/5's controllers to exist
+Story 7, Story 9 — depend on controllers being in place
+So the realistic kickoff is: two people start Stories 1 and 2 in parallel now, and everything else queues behind Story 1 → Story 3 → (4, 5, 6, 7 in parallel) → 8 → 9.
